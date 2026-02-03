@@ -8,6 +8,12 @@ const POWERUP_SPAWN_RATE = 0.003;
 const PLAYER_INVULNERABILITY_TIME = 1500;
 const MAX_ENEMIES_ON_SCREEN = 12;
 
+// Mobile touch controls
+let touchStartX = 0;
+let touchStartY = 0;
+let isTouching = false;
+let touchJoystick = { active: false, startX: 0, startY: 0, currentX: 0, currentY: 0 };
+
 // Leveling System
 const LEVEL_CONFIG = {
     1: { requiredKills: 15, enemySpawnRate: 100, maxEnemies: 8 },
@@ -394,6 +400,11 @@ function startGame() {
     gamePaused = false;
     isPauseEnabled = true;
 
+    // Restart auto-shoot for mobile
+    if (isMobileDevice) {
+        startAutoShoot();
+    }
+
     const startBtn = document.getElementById('start-btn');
     startBtn.querySelector('.btn-text').textContent = 'RESTART GAME';
     startBtn.disabled = false;
@@ -429,6 +440,12 @@ function togglePause() {
 function gameOver() {
     gameRunning = false;
     isPauseEnabled = false;
+
+    // Stop auto-shoot on mobile
+    if (isMobileDevice) {
+        stopAutoShoot();
+    }
+
 
     if (typeof particleSystem !== 'undefined' && particleSystem.createExplosion) {
         particleSystem.createExplosion(player.x, player.y, '#ff0000', 50);
@@ -841,6 +858,17 @@ function draw() {
         ctx.font = '12px Orbitron';
         ctx.fillText(`Progress: ${enemiesKilledThisLevel}/${config.requiredKills}`, 10, 30);
     }
+
+    // Draw touch controls
+    drawTouchControls();
+
+    // Mobile touch instruction
+    if (isMobileDevice && gameRunning && !isLevelingUp) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+        ctx.font = '14px Orbitron';
+        ctx.textAlign = 'center';
+        ctx.fillText('Touch & Drag to Move', canvas.width / 2, canvas.height - 20);
+    }
 }
 
 function checkCollision(obj1, obj2) {
@@ -936,6 +964,169 @@ function spawnPowerup() {
     });
 }
 
+// Mobile Touch Controls
+function initTouchControls() {
+    if (!isMobileDevice) return;
+
+    // Touch move controls
+    canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+    canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+    canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
+
+    // Auto-shoot on mobile
+    startAutoShoot();
+}
+
+function handleTouchStart(e) {
+    e.preventDefault();
+    const touch = e.touches[0];
+    const rect = canvas.getBoundingClientRect();
+
+    touchStartX = touch.clientX - rect.left;
+    touchStartY = touch.clientY - rect.top;
+
+    isTouching = true;
+
+    // Virtual joystick
+    touchJoystick.active = true;
+    touchJoystick.startX = touchStartX;
+    touchJoystick.startY = touchStartY;
+    touchJoystick.currentX = touchStartX;
+    touchJoystick.currentY = touchStartY;
+}
+
+function handleTouchMove(e) {
+    e.preventDefault();
+    if (!isTouching || !gameRunning || gamePaused) return;
+
+    const touch = e.touches[0];
+    const rect = canvas.getBoundingClientRect();
+
+    const touchX = touch.clientX - rect.left;
+    const touchY = touch.clientY - rect.top;
+
+    touchJoystick.currentX = touchX;
+    touchJoystick.currentY = touchY;
+
+    // Calculate movement delta
+    const deltaX = touchX - touchStartX;
+    const deltaY = touchY - touchStartY;
+
+    // Move player based on touch drag
+    const sensitivity = 1.5;
+    player.x += deltaX * sensitivity;
+    player.y += deltaY * sensitivity;
+
+    // Keep player in bounds
+    player.x = Math.max(player.width / 2, Math.min(canvas.width - player.width / 2, player.x));
+    player.y = Math.max(player.height / 2, Math.min(canvas.height - player.height / 2 - 20, player.y));
+
+    // Update touch start position for continuous movement
+    touchStartX = touchX;
+    touchStartY = touchY;
+}
+
+function handleTouchEnd(e) {
+    e.preventDefault();
+    isTouching = false;
+    touchJoystick.active = false;
+}
+
+// Auto-shoot for mobile
+let autoShootInterval;
+function startAutoShoot() {
+    if (autoShootInterval) clearInterval(autoShootInterval);
+
+    autoShootInterval = setInterval(() => {
+        if (gameRunning && !gamePaused && isMobileDevice) {
+            player.shoot();
+        }
+    }, 200); // Shoot every 200ms
+}
+
+function stopAutoShoot() {
+    if (autoShootInterval) {
+        clearInterval(autoShootInterval);
+        autoShootInterval = null;
+    }
+}
+
+// Draw touch joystick indicator
+function drawTouchControls() {
+    if (!isMobileDevice || !touchJoystick.active) return;
+
+    ctx.save();
+
+    // Draw joystick base
+    ctx.strokeStyle = 'rgba(0, 255, 170, 0.3)';
+    ctx.fillStyle = 'rgba(0, 255, 170, 0.1)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(touchJoystick.startX, touchJoystick.startY, 50, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Draw joystick direction indicator
+    const dx = touchJoystick.currentX - touchJoystick.startX;
+    const dy = touchJoystick.currentY - touchJoystick.startY;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    const maxDistance = 50;
+
+    let indicatorX = touchJoystick.currentX;
+    let indicatorY = touchJoystick.currentY;
+
+    if (distance > maxDistance) {
+        const angle = Math.atan2(dy, dx);
+        indicatorX = touchJoystick.startX + Math.cos(angle) * maxDistance;
+        indicatorY = touchJoystick.startY + Math.sin(angle) * maxDistance;
+    }
+
+    ctx.fillStyle = 'rgba(0, 255, 170, 0.6)';
+    ctx.beginPath();
+    ctx.arc(indicatorX, indicatorY, 25, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Draw direction line
+    ctx.strokeStyle = 'rgba(0, 255, 170, 0.5)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(touchJoystick.startX, touchJoystick.startY);
+    ctx.lineTo(indicatorX, indicatorY);
+    ctx.stroke();
+
+    ctx.restore();
+}
+
+// Alternative: Direct touch to move player
+function handleDirectTouch(e) {
+    e.preventDefault();
+    if (!gameRunning || gamePaused) return;
+
+    const touch = e.touches[0];
+    const rect = canvas.getBoundingClientRect();
+
+    const touchX = touch.clientX - rect.left;
+    const touchY = touch.clientY - rect.top;
+
+    // Smoothly move player towards touch point
+    const targetX = touchX;
+    const targetY = touchY;
+
+    const dx = targetX - player.x;
+    const dy = targetY - player.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    if (distance > 5) {
+        const speed = Math.min(player.speed, distance / 10);
+        player.x += (dx / distance) * speed;
+        player.y += (dy / distance) * speed;
+
+        // Keep in bounds
+        player.x = Math.max(player.width / 2, Math.min(canvas.width - player.width / 2, player.x));
+        player.y = Math.max(player.height / 2, Math.min(canvas.height - player.height / 2 - 20, player.y));
+    }
+}
+
 async function init() {
     canvas = document.getElementById('gameCanvas');
     ctx = canvas.getContext('2d');
@@ -947,6 +1138,9 @@ async function init() {
 
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('keyup', handleKeyUp);
+
+    // Initialize touch controls
+    initTouchControls();
 
     document.getElementById('start-btn').addEventListener('click', startGame);
     document.getElementById('pause-btn').addEventListener('click', togglePause);
